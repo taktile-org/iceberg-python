@@ -955,6 +955,7 @@ class ManifestWriter(ABC):
     _min_sequence_number: int | None
     _partitions: list[Record]
     _compression: AvroCompressionCodec
+    _inferred_content: ManifestContent | None
 
     def __init__(
         self,
@@ -979,6 +980,7 @@ class ManifestWriter(ABC):
         self._min_sequence_number = None
         self._partitions = []
         self._compression = avro_compression
+        self._inferred_content = None
 
     def __enter__(self) -> ManifestWriter:
         """Open the writer."""
@@ -1061,6 +1063,26 @@ class ManifestWriter(ABC):
     def add_entry(self, entry: ManifestEntry) -> ManifestWriter:
         if self.closed:
             raise RuntimeError("Cannot add entry to closed manifest writer")
+
+        # Infer manifest content from the data files
+        if self._inferred_content is None:
+            # First file determines the manifest content
+            if entry.data_file.content == DataFileContent.DATA:
+                self._inferred_content = ManifestContent.DATA
+            else:
+                # Both POSITION_DELETES and EQUALITY_DELETES go into DELETES manifests
+                self._inferred_content = ManifestContent.DELETES
+        else:
+            # Validate that all files have consistent content type
+            expected_manifest_content = (
+                ManifestContent.DATA if entry.data_file.content == DataFileContent.DATA else ManifestContent.DELETES
+            )
+            if self._inferred_content != expected_manifest_content:
+                raise ValueError(
+                    f"Cannot add {entry.data_file.content} file to a {self._inferred_content} manifest. "
+                    f"Data files and delete files must be stored in separate manifests."
+                )
+
         if entry.status == ManifestEntryStatus.ADDED:
             self._added_files += 1
             self._added_rows += entry.data_file.record_count
@@ -1134,6 +1156,9 @@ class ManifestWriterV1(ManifestWriter):
         super().__init__(spec, schema, output_file, snapshot_id, avro_compression)
 
     def content(self) -> ManifestContent:
+        # V1 tables only support data manifests
+        if self._inferred_content == ManifestContent.DELETES:
+            raise ValidationError("Cannot write delete manifests in V1 tables")
         return ManifestContent.DATA
 
     @property
@@ -1156,7 +1181,8 @@ class ManifestWriterV2(ManifestWriter):
         super().__init__(spec, schema, output_file, snapshot_id, avro_compression)
 
     def content(self) -> ManifestContent:
-        return ManifestContent.DATA
+        # Return the inferred content based on the files added, defaulting to DATA
+        return self._inferred_content if self._inferred_content is not None else ManifestContent.DATA
 
     @property
     def version(self) -> TableVersion:
@@ -1164,9 +1190,10 @@ class ManifestWriterV2(ManifestWriter):
 
     @property
     def _meta(self) -> dict[str, str]:
+        content_str = "deletes" if self.content() == ManifestContent.DELETES else "data"
         return {
             **super()._meta,
-            "content": "data",
+            "content": content_str,
         }
 
     def prepare_entry(self, entry: ManifestEntry) -> ManifestEntry:
