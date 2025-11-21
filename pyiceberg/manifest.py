@@ -273,7 +273,7 @@ DATA_FILE_TYPE: dict[int, StructType] = {
         NestedField(
             field_id=135,
             name="equality_ids",
-            field_type=ListType(element_id=136, element_type=LongType(), element_required=True),
+            field_type=ListType(element_id=136, element_type=IntegerType(), element_required=True),
             required=False,
             doc="Field ids used to determine row equality in equality delete files.",
         ),
@@ -368,7 +368,7 @@ DATA_FILE_TYPE: dict[int, StructType] = {
         NestedField(
             field_id=135,
             name="equality_ids",
-            field_type=ListType(element_id=136, element_type=LongType(), element_required=True),
+            field_type=ListType(element_id=136, element_type=IntegerType(), element_required=True),
             required=False,
             doc="Field ids used to determine row equality in equality delete files.",
         ),
